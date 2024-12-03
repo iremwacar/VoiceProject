@@ -32,14 +32,17 @@
                 const formData = new FormData();
                 formData.append('file', audioBlob, 'recording.wav');
 
+                // API isteği gönder
                 const response = await fetch('http://127.0.0.1:8000/predict', {
                     method: 'POST',
                     body: formData
                 });
 
+                // Yanıtı kontrol et
                 const result = await response.json();
+                console.log(result);  // Backend yanıtını kontrol et
                 document.getElementById("prediction-result").textContent = 
-                    `Tahmin: ${result.prediction || result.error}`;
+                    `Tahmin: ${result.prediction || result.error || 'Bilinmeyen hata'}`;
             };
 
             mediaRecorder.start();

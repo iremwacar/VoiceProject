@@ -1,25 +1,41 @@
 from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 import joblib
 import librosa
 import numpy as np
 import tempfile
 import os
-import joblib
-from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+# Yollar
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # app.py'nin bulunduğu dizin
 MODEL_DIR = os.path.join(BASE_DIR, '..', 'Model')      # Model klasörünün yolu
 FRONTEND_DIR = os.path.join(BASE_DIR, '..', 'Frontend')
 
+# Model ve scaler yükle
 scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.joblib'))
 model = joblib.load(os.path.join(MODEL_DIR, 'random_forest_model.joblib'))
 
-
+# FastAPI Uygulaması
 app = FastAPI()
 
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+# CORS Middleware ekle
+origins = [
+    "http://localhost:3000",  # Frontend adresinizi buraya ekleyin
+    "http://127.0.0.1",
+    "http://localhost:8000",  # Eğer aynı portta çalışıyorsa
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # Belirtilen originlere izin ver
+    allow_credentials=True,
+    allow_methods=["*"],  # Tüm HTTP metodlarına izin ver
+    allow_headers=["*"],  # Tüm başlıklara izin ver
+)
+
+# Frontend'i sunmak
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 
 def extract_features_for_prediction(file_path):
     """Ses dosyasından özellikleri çıkar."""
