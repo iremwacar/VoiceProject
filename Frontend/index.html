@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ses Tahmini</title>
+</head>
+<body>
+    <h1>Ses Kaydet ve Tahmin Et</h1>
+    <button id="start-recording">Kaydı Başlat</button>
+    <button id="stop-recording" disabled>Kaydı Durdur ve Gönder</button>
+    <audio id="audio-preview" controls></audio>
+    <p id="prediction-result"></p>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+
+        document.getElementById("start-recording").onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                document.getElementById("audio-preview").src = audioUrl;
+
+                const formData = new FormData();
+                formData.append('file', audioBlob, 'recording.wav');
+
+                const response = await fetch('http://127.0.0.1:8000/predict', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                document.getElementById("prediction-result").textContent = 
+                    `Tahmin: ${result.prediction || result.error}`;
+            };
+
+            mediaRecorder.start();
+            audioChunks = [];
+            document.getElementById("start-recording").disabled = true;
+            document.getElementById("stop-recording").disabled = false;
+        };
+
+        document.getElementById("stop-recording").onclick = () => {
+            mediaRecorder.stop();
+            document.getElementById("start-recording").disabled = false;
+            document.getElementById("stop-recording").disabled = true;
+        };
+    </script>
+</body>
+</html>
