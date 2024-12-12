@@ -3,14 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ses Dosyası Yükleme</title>
+    <title>Ses Tanıma</title>
 </head>
 <body>
-    <h1>Ses Dosyasını Yükleyin</h1>
-    <form action="/predict" method="POST" enctype="multipart/form-data">
-        <label for="file">Ses Dosyasını Seçin:</label>
-        <input type="file" name="file" id="file" required>
-        <button type="submit">Tahmin Et</button>
-    </form>
+    <h1>Ses Tanıma Uygulaması</h1>
+
+    <!-- Kaydetme, durdurma butonları -->
+    <button id="startButton">Ses Kaydına Başla</button>
+    <button id="stopButton" disabled>Durdur</button>
+    
+    <h2>Kaydedilen Ses:</h2>
+    <audio id="audioPlayer" controls></audio>
+    
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioUrl;
+        let audioBlob;
+
+        // Ses kaydını başlat
+        document.getElementById('startButton').addEventListener('click', async function() {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                audioUrl = URL.createObjectURL(audioBlob);
+                document.getElementById('audioPlayer').src = audioUrl;
+                
+                // Kaydedilen sesi Flask'a gönder
+                sendAudioToBackend(audioBlob);
+            };
+
+            mediaRecorder.start();
+            document.getElementById('startButton').disabled = true;
+            document.getElementById('stopButton').disabled = false;
+        });
+
+        // Ses kaydını durdur
+        document.getElementById('stopButton').addEventListener('click', function() {
+            mediaRecorder.stop();
+            document.getElementById('startButton').disabled = false;
+            document.getElementById('stopButton').disabled = true;
+        });
+
+        // Ses kaydını Flask backend'ine gönder
+        function sendAudioToBackend(audioBlob) {
+            let formData = new FormData();
+            formData.append('file', audioBlob, 'recording.wav');
+
+            fetch('/predict', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Tahmin Sonucu:', data);
+                alert('Tahmin Sonucu: ' + data.prediction);
+            })
+            .catch(error => console.error('Error:', error));
+        }
+    </script>
 </body>
 </html>
