@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Speaker Recognition</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.min.js"></script>
+    <script type="text/javascript">
+        var socket = io.connect('http://' + document.domain + ':' + location.port);
+
+        socket.on('speaker_update', function(data) {
+            document.getElementById('speaker').innerText = 'Current Speaker: ' + data.speaker;
+        });
+    </script>
+</head>
+<body>
+    <h1>Real-Time Speaker Recognition</h1>
+    <p id="speaker">Current Speaker: None</p>
+    <button onclick="startRecording()">Start Recording</button>
+    <button onclick="stopRecording()">Stop Recording</button>
+
+    <script type="text/javascript">
+        function startRecording() {
+            socket.emit('start_recording');
+        }
+
+        function stopRecording() {
+            socket.emit('stop_recording');
+        }
+    </script>
+</body>
+</html>
