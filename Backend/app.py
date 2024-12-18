@@ -1,27 +1,65 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, jsonify, render_template
 import librosa
 import numpy as np
 import joblib
-import os
+import sounddevice as sd
+import queue
+from flask_socketio import SocketIO, emit
 import logging
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+import threading
+import time
+import pandas as pd
+import noisereduce as nr  # Gürültü azaltma kütüphanesi
+import wave
+import io
 
 app = Flask(__name__, template_folder='../Frontend')
+socketio = SocketIO(app)
 
-# Modeli yükleyin (eğitilmiş modelinizin yolunu belirtin)
-model = joblib.load("../Model/random_forest_model.joblib")
+model = joblib.load("../Model/random_forest_model1.joblib")
 
-# Scaler'ı yükleyin (MinMaxScaler veya StandardScaler)
-scaler = joblib.load("../Model/scaler.joblib")
+# Mikrofon kaydını dinlemek için
+last_prediction_time = 0  # Son tahminin yapıldığı zaman
+prediction_interval = 1.5  # Her 1 saniyede bir tahmin yap
 
-# Özellikleri normalleştirme fonksiyonu
-def normalize_features(features):
-    # Özellikleri yeniden şekillendir ve normalizasyonu uygula
-    features_reshaped = np.reshape(features, (1, -1))  # [1, n] formatına getir
-    normalized_features = scaler.transform(features_reshaped)
+# Mikrofon kaydını başlatan fonksiyon
+def audio_callback(indata, frames, time_info, status):
+    global last_prediction_time
     
-    # Normalize edilmiş özellikleri döndür
-    return normalized_features[0]
+    if status:
+        print(status)
+    
+    audio_data = indata[:, 0]  # Sadece tek kanal alıyoruz (mono)
+    
+    # Gürültü azaltma işlemi
+    audio_data = nr.reduce_noise(y=audio_data, sr=16000)  # Gürültüyü azalt
+    
+    # WAV formatında işlemek
+    wav_data = audio_data.astype(np.float32)  # Veriyi uygun formatta ayarlıyoruz
+    wav_io = io.BytesIO()
+    
+    # 'wav' dosyasına kaydet
+    with wave.open(wav_io, 'wb') as wav_file:
+        wav_file.setnchannels(1)  # Mono kanal
+        wav_file.setsampwidth(2)  # 16 bit (2 byte) örnekleme genişliği
+        wav_file.setframerate(16000)  # Örnekleme hızı
+        wav_file.writeframes(wav_data.tobytes())  # Ses verisini kaydet
+    
+    wav_io.seek(0)  # Dosyayı başa sar
+    
+    # Librosa ile WAV verisini işle
+    audio_data, sr = librosa.load(wav_io, sr=16000)  # 16 kHz örnekleme hızı ile yükle
+    
+    features = extract_features_from_audio(audio_data, sr)
+    
+    if features is not None:
+        current_time = time.time()
+        
+        if current_time - last_prediction_time >= prediction_interval:
+            # Tahmin yap
+            prediction = model.predict([features])[0]
+            socketio.emit('speaker_update', {'speaker': prediction})
+            last_prediction_time = current_time  # Son tahmin zamanını güncelle
 
 # Özellik çıkarma fonksiyonu
 def extract_features_from_audio(audio_data, sr=16000):
@@ -50,71 +88,44 @@ def extract_features_from_audio(audio_data, sr=16000):
         features = np.hstack((mfcc_mean, chroma_mean, rms_mean, zcr_mean))
         logging.debug(f"Extracted Features: {features}")
         
-        # Özellikleri normalleştir
-        normalized_features = normalize_features(features)
-        logging.debug(f"Normalized Features: {normalized_features}")
-        
-        return normalized_features
+        return features
     
     except Exception as e:
         logging.error(f"Error processing audio: {e}")
         return None
 
+# Mikrofon kaydını başlatma
+recording_thread = None
+is_recording = False
+
+@socketio.on('start_recording')
+def start_recording():
+    global recording_thread, is_recording
+    if not is_recording:
+        # Ses verisini sürekli olarak dinlemek için mikrofonu başlatıyoruz
+        print("Recording started...")
+        is_recording = True
+        recording_thread = threading.Thread(target=record_audio)
+        recording_thread.start()
+    else:
+        print("Recording already in progress")
+
+@socketio.on('stop_recording')
+def stop_recording():
+    global is_recording
+    is_recording = False
+    print("Recording stopped")
+    socketio.emit('speaker_update', {'speaker': 'None'})
+
+def record_audio():
+    with sd.InputStream(callback=audio_callback, channels=1, samplerate=16000):
+        while is_recording:
+            time.sleep(0.5)  # 1 saniye bekle, sonra ses verisini al ve tahmin yap
+
 @app.route('/')
 def index():
-    # Ana sayfayı (HTML formunu) kullanıcıya göster
-    return render_template('index.html')
-
-logging.basicConfig(level=logging.DEBUG)
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    # Ses dosyasını alın
-    audio_file = request.files['file']
-    
-    logging.debug(f"Dosya alındı: {audio_file.filename}")
-    
-    # Geçici bir dosyaya kaydedin
-    temp_file_path = os.path.join('uploads', audio_file.filename)
-
-    # Mevcut ses kaydını silin (önceki kayıttan kalma dosya varsa)
-    for file in os.listdir('uploads'):
-        file_path = os.path.join('uploads', file)
-        if os.path.isfile(file_path):
-            os.remove(file_path)
-            logging.debug(f"Önceki dosya silindi: {file_path}")
-
-    # Yeni dosyayı kaydedin
-    audio_file.save(temp_file_path)
-    
-    logging.debug(f"Dosya kaydedildi: {temp_file_path}")
-
-    # Ses dosyasını yükleyin
-    try:
-        audio_data, sr = librosa.load(temp_file_path, sr=None)
-        logging.debug(f"Ses verisi yüklendi: {temp_file_path}")
-        
-        # Özellik çıkarımı
-        features = extract_features_from_audio(audio_data)
-        if features is None:
-            return jsonify({"error": "Ses dosyası işlenemedi."}), 500
-
-        logging.debug(f"Özellikler çıkarıldı: {features}")
-
-        # Model ile tahmin yapma
-        prediction = model.predict([features])
-        logging.debug(f"Tahmin yapıldı: {prediction}")
-
-        # Dosyayı silme
-        os.remove(temp_file_path)
-        logging.debug(f"Dosya silindi: {temp_file_path}")
-
-        # Tahmin sonuçlarını döndürün
-        return jsonify({"prediction": prediction[0]})
-    
-    except Exception as e:
-        logging.error(f"Ses dosyası işlenemedi: {e}")
-        return jsonify({"error": "Ses dosyası işlenemedi."}), 500
+    return render_template('index2.html')  # Ana sayfa
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    logging.basicConfig(level=logging.DEBUG)  # Debug logları görüntüle
+    socketio.run(app, debug=True)  # Flask-SocketIO sunucusunu başlat

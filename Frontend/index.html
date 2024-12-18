@@ -3,70 +3,91 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ses Tanıma</title>
+    <title>Ses Kaydı ve Tahmin</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            flex-direction: column;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 18px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        .status {
+            font-size: 18px;
+            margin-top: 20px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Ses Tanıma Uygulaması</h1>
+    <h1>Ses Kaydı ve Konuşmacı Tahmini</h1>
+    <button id="start-recording">Kaydı Başlat</button>
+    <button id="stop-recording" disabled>Kaydı Durdur</button>
+    <div class="status" id="status"></div>
 
-    <!-- Kaydetme, durdurma butonları -->
-    <button id="startButton">Ses Kaydına Başla</button>
-    <button id="stopButton" disabled>Durdur</button>
-    
-    <h2>Kaydedilen Ses:</h2>
-    <audio id="audioPlayer" controls></audio>
-    
     <script>
+        const startButton = document.getElementById('start-recording');
+        const stopButton = document.getElementById('stop-recording');
+        const statusDiv = document.getElementById('status');
+        
         let mediaRecorder;
         let audioChunks = [];
-        let audioUrl;
-        let audioBlob;
 
         // Ses kaydını başlat
-        document.getElementById('startButton').addEventListener('click', async function() {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
+        startButton.onclick = () => {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        const formData = new FormData();
+                        formData.append('audio', audioBlob, 'audio.wav');
 
-            mediaRecorder.onstop = () => {
-                audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                audioUrl = URL.createObjectURL(audioBlob);
-                document.getElementById('audioPlayer').src = audioUrl;
-                
-                // Kaydedilen sesi Flask'a gönder
-                sendAudioToBackend(audioBlob);
-            };
-
-            mediaRecorder.start();
-            document.getElementById('startButton').disabled = true;
-            document.getElementById('stopButton').disabled = false;
-        });
+                        // Ses kaydını backend'e gönder
+                        fetch('/predict', {
+                            method: 'POST',
+                            body: formData,
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.speaker) {
+                                statusDiv.textContent = `Tahmin edilen konuşmacı: ${data.speaker}`;
+                            } else if (data.error) {
+                                statusDiv.textContent = `Hata: ${data.error}`;
+                            }
+                        })
+                        .catch(error => {
+                            statusDiv.textContent = `Bir hata oluştu: ${error}`;
+                        });
+                    };
+                    
+                    mediaRecorder.start();
+                    startButton.disabled = true;
+                    stopButton.disabled = false;
+                    statusDiv.textContent = 'Kaydediliyor...';
+                })
+                .catch(error => {
+                    statusDiv.textContent = `Mikrofon erişimi hatası: ${error}`;
+                });
+        };
 
         // Ses kaydını durdur
-        document.getElementById('stopButton').addEventListener('click', function() {
+        stopButton.onclick = () => {
             mediaRecorder.stop();
-            document.getElementById('startButton').disabled = false;
-            document.getElementById('stopButton').disabled = true;
-        });
-
-        // Ses kaydını Flask backend'ine gönder
-        function sendAudioToBackend(audioBlob) {
-            let formData = new FormData();
-            formData.append('file', audioBlob, 'recording.wav');
-
-            fetch('/predict', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                console.log('Tahmin Sonucu:', data);
-                alert('Tahmin Sonucu: ' + data.prediction);
-            })
-            .catch(error => console.error('Error:', error));
-        }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            statusDiv.textContent = 'Kaydetme durduruldu. Tahmin yapılıyor...';
+        };
     </script>
 </body>
 </html>

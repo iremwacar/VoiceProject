@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Recognition System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.4.0/axios.min.js"></script>
+</head>
+<body>
+<div class="container mt-5">
+    <h1 class="text-center">Audio Recognition System</h1>
+    
+    <!-- Add User Section -->
+    <div class="card mt-4">
+        <div class="card-header">Add New User</div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="username" class="form-label">User Name</label>
+                <input type="text" id="username" class="form-control" placeholder="Enter user name">
+            </div>
+            <button id="addUserBtn" class="btn btn-primary">Start Recording</button>
+            <div id="addUserMessage" class="mt-3"></div>
+        </div>
+    </div>
+
+    <!-- Train Model Section -->
+    <div class="card mt-4">
+        <div class="card-header">Train Model</div>
+        <div class="card-body">
+            <button id="trainModelBtn" class="btn btn-success">Train Model</button>
+            <div id="trainModelMessage" class="mt-3"></div>
+        </div>
+    </div>
+
+    <!-- Prediction Section -->
+    <div class="card mt-4">
+        <div class="card-header">Predict Speaker</div>
+        <div class="card-body">
+            <button id="predictBtn" class="btn btn-warning">Start Prediction</button>
+            <div id="predictionResult" class="mt-3"></div>
+        </div>
+    </div>
+
+    <!-- Delete User Section -->
+    <div class="card mt-4">
+        <div class="card-header">Delete User</div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="deleteUsername" class="form-label">User Name</label>
+                <input type="text" id="deleteUsername" class="form-control" placeholder="Enter user name to delete">
+            </div>
+            <button id="deleteUserBtn" class="btn btn-danger">Delete User</button>
+            <div id="deleteUserMessage" class="mt-3"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Add User Functionality
+    document.getElementById('addUserBtn').addEventListener('click', () => {
+        const username = document.getElementById('username').value;
+        if (!username) {
+            document.getElementById('addUserMessage').innerText = "Please enter a user name.";
+            return;
+        }
+        axios.post('/add_user', { name: username })
+            .then(response => {
+                document.getElementById('addUserMessage').innerText = response.data.message;
+            })
+            .catch(error => {
+                document.getElementById('addUserMessage').innerText = error.response.data.error;
+            });
+    });
+
+    // Train Model Functionality
+    document.getElementById('trainModelBtn').addEventListener('click', () => {
+        axios.post('/train_model')
+            .then(response => {
+                document.getElementById('trainModelMessage').innerText = `Model trained successfully. Accuracy: ${response.data.accuracy}`;
+            })
+            .catch(error => {
+                document.getElementById('trainModelMessage').innerText = error.response.data.error;
+            });
+    });
+
+    // Predict Functionality
+    document.getElementById('predictBtn').addEventListener('click', () => {
+        axios.post('/predict')
+            .then(response => {
+                document.getElementById('predictionResult').innerText = `Prediction: ${response.data.prediction}`;
+            })
+            .catch(error => {
+                document.getElementById('predictionResult').innerText = error.response.data.error;
+            });
+    });
+
+    // Delete User Functionality
+    document.getElementById('deleteUserBtn').addEventListener('click', () => {
+        const username = document.getElementById('deleteUsername').value;
+        if (!username) {
+            document.getElementById('deleteUserMessage').innerText = "Please enter a user name.";
+            return;
+        }
+        axios.post('/delete_user', { name: username })
+            .then(response => {
+                document.getElementById('deleteUserMessage').innerText = response.data.message;
+            })
+            .catch(error => {
+                document.getElementById('deleteUserMessage').innerText = error.response.data.error;
+            });
+    });
+</script>
+
+</body>
+</html>
