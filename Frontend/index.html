@@ -1,93 +1,369 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ses Kaydı ve Tahmin</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.1.3/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            flex-direction: column;
+            margin: 20px;
         }
-        button {
+
+        h1,
+        h3 {
+            color: #2c3e50;
+        }
+
+        #message {
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        #start-recording-btn,
+        #process-btn,
+        #predict-btn {
+            margin-top: 10px;
             padding: 10px 20px;
-            font-size: 18px;
+            background-color: #3498db;
+            color: white;
+            border: none;
             cursor: pointer;
-            margin: 10px;
         }
-        .status {
-            font-size: 18px;
+
+        #start-recording-btn:disabled,
+        #process-btn:disabled,
+        #predict-btn:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+
+        img {
+            display: block;
             margin-top: 20px;
+            max-width: 100%;
+            height: auto;
+        }
+
+        #predicted-person {
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        #prediction {
+            margin-top: 20px;
+            font-size: 20px;
+            font-weight: bold;
         }
     </style>
 </head>
+
 <body>
-    <h1>Ses Kaydı ve Konuşmacı Tahmini</h1>
-    <button id="start-recording">Kaydı Başlat</button>
-    <button id="stop-recording" disabled>Kaydı Durdur</button>
-    <div class="status" id="status"></div>
+    <h1>Ses Kaydı ve Tahmin</h1>
+
+    <!-- Kullanıcı adı inputu -->
+    <label for="username">Kullanıcı Adı:</label>
+    <input type="text" id="username" placeholder="Kullanıcı Adı" required>
+    <button onclick="addUser()">Yeni Kullanıcı Ekle</button>
+    <p id="message"></p>
+
+    <!-- Ses kaydını başlatma butonu -->
+    <button id="start-recording-btn" onclick="startRecordingAudio()" disabled>Ses Kaydını Başlat</button>
+
+    <!-- CSV işleme butonu -->
+    <button id="process-btn" onclick="processAudioFiles()" disabled>Sesleri CSV'ye İşle</button>
+    <h3>Waveform</h3>
+    <img id="waveform" width="500" />
+
+    <!-- Spectrogram Görseli -->
+    <h3>Spectrogram</h3>
+    <img id="spectrogram" width="500" />
+
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+
+    <div id="transcription">Konuşmaya başladığınızda burada metin belirecek...</div>
+
+    <div class="result-box">
+        <h3>Konuşmacı: <span id="speaker">Bekleniyor...</span></h3>
+        <h3>Kategori: <span id="category">Bekleniyor...</span></h3>
+        <h3>Duygu tahmini <span id="emotion">Bekliyor...</span></h3>
+        <h3>Kelime Sayısı: <span id="wordCount">0</span></h3>
+    </div>
+
+    <!-- Ses Tahmini Yapma Butonu -->
+    <p id="speaker"></p>
+    <button onclick="startRecordingPrediction()">Start Recording</button>
+    <button onclick="stopRecordingPrediction()">Stop Recording</button>
+
+
+
 
     <script>
-        const startButton = document.getElementById('start-recording');
-        const stopButton = document.getElementById('stop-recording');
-        const statusDiv = document.getElementById('status');
-        
+
+        const transcriptionDiv = document.getElementById("transcription");
+        const speakerSpan = document.getElementById("speaker");
+        const categorySpan = document.getElementById("category");
+        const wordCountSpan = document.getElementById("wordCount");
+        const timerDiv = document.getElementById("timer");
+        const emotionSpan = document.getElementById("emotion");
+
+        let recognition;
+        let processedSegments = [];
+        let users = new Set();
+        let timer = 0;
+        let timerInterval;
+        const socket = io("http://127.0.0.1:5000");
+
         let mediaRecorder;
         let audioChunks = [];
 
-        // Ses kaydını başlat
-        startButton.onclick = () => {
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    mediaRecorder = new MediaRecorder(stream);
-                    mediaRecorder.ondataavailable = event => {
-                        audioChunks.push(event.data);
-                    };
-                    mediaRecorder.onstop = () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                        const formData = new FormData();
-                        formData.append('audio', audioBlob, 'audio.wav');
+        // Yeni kullanıcı ekleme
+        async function addUser() {
+            const username = document.getElementById('username').value;
 
-                        // Ses kaydını backend'e gönder
-                        fetch('/predict', {
-                            method: 'POST',
-                            body: formData,
-                        })
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.speaker) {
-                                statusDiv.textContent = `Tahmin edilen konuşmacı: ${data.speaker}`;
-                            } else if (data.error) {
-                                statusDiv.textContent = `Hata: ${data.error}`;
+            if (!username) {
+                alert("Lütfen kullanıcı adınızı girin.");
+                return;
+            }
+
+            try {
+                const formData = new FormData();
+                formData.append('username', username);
+
+                const response = await fetch('/add_user', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                const messageElement = document.getElementById('message');
+
+                if (data.status === "success") {
+                    messageElement.style.color = "green";
+                    messageElement.textContent = data.message;
+                    document.getElementById('start-recording-btn').disabled = false;
+                } else {
+                    messageElement.style.color = "red";
+                    messageElement.textContent = data.message;
+                    document.getElementById('start-recording-btn').disabled = true;
+                }
+            } catch (error) {
+                alert('Kullanıcı eklenirken bir hata oluştu: ' + error.message);
+            }
+        }
+
+        // Ses kaydını başlatma
+        async function startRecordingAudio() {
+            const username = document.getElementById('username').value;
+
+            if (!username) {
+                alert("Lütfen kullanıcı adınızı girin.");
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const formData = new FormData();
+                    formData.append('username', username);
+                    formData.append('audio', audioBlob, 'audio.webm');
+
+                    const response = await fetch('/save_audio', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const data = await response.json();
+                    alert(data.message);
+
+                    if (data.status === "success") {
+                        document.getElementById('waveform').src = 'data:image/png;base64,' + data.waveform;
+                        document.getElementById('spectrogram').src = 'data:image/png;base64,' + data.spectrogram;
+                        document.getElementById('process-btn').disabled = false;
+                    }
+                };
+
+                mediaRecorder.start();
+                setTimeout(() => {
+                    mediaRecorder.stop();
+                }, 90000);  // 5 saniye sonra kaydı durdur
+            } catch (error) {
+                alert('Ses kaydı başlatılırken bir hata oluştu: ' + error.message);
+            }
+        }
+
+        // Ses dosyalarını işleyip CSV'ye yazma
+        async function processAudioFiles() {
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+                alert(data.message);
+            } catch (error) {
+                alert('Ses dosyalarını işlerken bir hata oluştu: ' + error.message);
+            }
+        }
+
+        // Anlık tahmin için ses kaydını başlatma
+        async function startRecordingPrediction() {
+            console.log("Ses kaydı başlatılıyor...");
+            socket.emit('start_recording');
+
+            if ("webkitSpeechRecognition" in window) {
+                recognition = new webkitSpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = "tr-TR";
+
+                recognition.onstart = () => {
+                    console.log("Ses tanıma başladı...");
+                    transcriptionDiv.textContent = "Dinliyor...";
+                    processedSegments = [];
+                    startTimer();
+                    socket.emit('start_recording');
+                };
+
+                recognition.onresult = (event) => {
+                    console.log("Sonuçlar alındı:", event);
+                    let interimText = "";
+                    for (let i = 0; i < event.results.length; i++) {
+                        const transcript = event.results[i][0].transcript.trim();
+                        if (event.results[i].isFinal) {
+                            console.log("Kesin sonuç:", transcript);
+                            if (!processedSegments.includes(transcript)) {
+                                processedSegments.push(transcript);
+                                sendToBackend(transcript);  // Backend'e metin gönderiliyor
                             }
-                        })
-                        .catch(error => {
-                            statusDiv.textContent = `Bir hata oluştu: ${error}`;
-                        });
-                    };
-                    
-                    mediaRecorder.start();
-                    startButton.disabled = true;
-                    stopButton.disabled = false;
-                    statusDiv.textContent = 'Kaydediliyor...';
+                        } else {
+                            interimText += transcript + " ";
+                            console.log("Geçici sonuç:", transcript);
+                        }
+                    }
+                    transcriptionDiv.textContent = processedSegments.join(" ") + " " + interimText;
+                    updateWordCount(transcriptionDiv.textContent);
+                };
+
+                recognition.onend = () => {
+                    console.log("Ses tanıma durduruldu...");
+                    transcriptionDiv.textContent += " [Kayıt durduruldu]";
+                    stopTimer();
+                    socket.emit('stop_recording');
+                };
+
+                recognition.onerror = (event) => {
+                    console.error("Konuşma tanıma hatası:", event.error);
+                    alert("Bir hata oluştu: " + event.error);
+                };
+
+                recognition.start();  // Tanımayı başlat
+            } else {
+                console.log("Tarayıcınız bu özelliği desteklemiyor!");
+                alert("Tarayıcınız bu özelliği desteklemiyor!");
+            }
+        }
+
+        async function stopRecordingPrediction() {
+            console.log("Ses kaydı durduruluyor...");
+            if (recognition) {
+        recognition.stop();  // Speech recognition'ı durdur
+    }
+            socket.emit('stop_recording'); // Sunucuya durdurma sinyali gönder
+        } // Sunucuya durdurma sinyali gönder
+
+
+        function sendToBackend(text) {
+            console.log("Backend'e gönderilen metin:", text);
+            fetch("http://127.0.0.1:5000/analyze", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: text })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Backend yanıtı:", data);
+                    speakerSpan.textContent = data.speaker || "Bilinmiyor";
+                    categorySpan.textContent = data.category || "Kategori Bulunamadı";
+                    emotionSpan.textContent = data.emotion || "Bilinmiyor";
                 })
                 .catch(error => {
-                    statusDiv.textContent = `Mikrofon erişimi hatası: ${error}`;
+                    console.error("Backend hatası:", error);
                 });
-        };
+        }
 
-        // Ses kaydını durdur
-        stopButton.onclick = () => {
-            mediaRecorder.stop();
-            startButton.disabled = false;
-            stopButton.disabled = true;
-            statusDiv.textContent = 'Kaydetme durduruldu. Tahmin yapılıyor...';
-        };
+        function updateWordCount(text) {
+            const words = text.trim().split(/\s+/).filter(word => word.length > 0);
+            console.log("Kelime sayısı:", words.length);
+            wordCountSpan.textContent = words.length;
+        }
+
+        function startTimer() {
+            console.log("Zamanlayıcı başlatıldı...");
+            timer = 0;
+            timerInterval = setInterval(() => {
+                timer++;
+                timerDiv.textContent = timer;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            console.log("Zamanlayıcı durduruldu...");
+            clearInterval(timerInterval);
+        }
+
+
+
+        // Ses tahminini dinle
+        socket.on('speaker_update', function (data) {
+            document.getElementById('speaker').textContent = data.speaker;
+        });
+
+        function sendToBackend(text) {
+            fetch("http://127.0.0.1:5000/analyze", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: text })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    speakerSpan.textContent = data.speaker || "Bilinmiyor";
+                    categorySpan.textContent = data.category || "Kategori Bulunamadı";
+                    emotionSpan.textContent = data.emotion || "Bilinmiyor";
+                })
+                .catch(error => console.error("Backend hatası:", error));
+        }
+
+        function updateWordCount(text) {
+            const words = text.trim().split(/\s+/).filter(word => word.length > 0);
+            wordCountSpan.textContent = words.length;
+        }
+
+        function startTimer() {
+            timer = 0;
+            timerInterval = setInterval(() => {
+                timer++;
+                timerDiv.textContent = timer;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+        }
+
+
     </script>
 </body>
+
 </html>
