@@ -130,10 +130,18 @@
         // Yeni kullanıcı ekleme
         async function addUser() {
             const username = document.getElementById('username').value;
+            const messageElement = document.getElementById('message');
 
+            // Check if username contains Turkish characters
+            const turkishChars = /[ğüşıçöĞÜŞİÇÖ]/;
             if (!username) {
-                alert("Lütfen kullanıcı adınızı girin.");
+                messageElement.textContent = "Lütfen kullanıcı adınızı girin.";
                 return;
+            } else if (turkishChars.test(username)) {
+                messageElement.textContent = "Kullanıcı adı Türkçe karakterler içermemelidir.";
+                return;
+            } else {
+                messageElement.textContent = ""; // Clear any previous error messages
             }
 
             try {
@@ -146,7 +154,6 @@
                 });
 
                 const data = await response.json();
-                const messageElement = document.getElementById('message');
 
                 if (data.status === "success") {
                     messageElement.style.color = "green";
@@ -158,9 +165,11 @@
                     document.getElementById('start-recording-btn').disabled = true;
                 }
             } catch (error) {
-                alert('Kullanıcı eklenirken bir hata oluştu: ' + error.message);
+                messageElement.style.color = "red";
+                messageElement.textContent = 'Kullanıcı eklenirken bir hata oluştu: ' + error.message;
             }
         }
+
 
         // Ses kaydını başlatma
         async function startRecordingAudio() {
