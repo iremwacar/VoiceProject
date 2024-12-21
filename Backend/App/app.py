@@ -29,7 +29,8 @@ import whisper
 import re
 from collections import defaultdict
 from zemberek import TurkishMorphology
-# Zemberek çözümleyici
+from collections import defaultdict
+
 
 
 morphology = TurkishMorphology.create_with_defaults()
@@ -345,6 +346,11 @@ users = {}
 # Mikrofon kaydını dinlemek için
 last_prediction_time = 0  # Son tahminin yapıldığı zaman
 prediction_interval = 1.5  # Her 1.5 saniyede bir tahmin yap
+# Konuşmacı sürelerini tutmak için bir sözlük
+speaker_times = {}
+total_time = 0  # Toplam konuşma süresi
+is_recording = False  # Kayıt durumu
+recording_thread = None  # Kayıt iş parçacığı
 
 # Başlangıç sayfası
 @app.route('/')
@@ -400,26 +406,46 @@ def predict_category(text):
     
 # Mikrofon kaydını başlatan fonksiyon
 def audio_callback(indata, frames, time_info, status):
-    global last_prediction_time
-    
+    global last_prediction_time, speaker_times, total_time
+
     if status:
         print(status)
-    
+
     audio_data = indata[:, 0]  # Sadece tek kanal alıyoruz (mono)
-    
+
     # Gürültü azaltma işlemi
-    audio_data = nr.reduce_noise(y=audio_data, sr=16000)  # Gürültüyü azalt
-    
-    features = extract_features(audio_data)  # Use the correct feature extraction function
-    
+    audio_data = nr.reduce_noise(y=audio_data, sr=16000)
+
+    features = extract_features(audio_data)  # Özellik çıkarımı
+
     if features is not None:
-        # Zaman bilgisini 'time.time()' ile alıyoruz
-        current_time = time.time()  # Global zaman bilgisi
-        
-        if current_time - last_prediction_time >= prediction_interval:
-            # Belirli bir zaman aralığından sonra tahmin yap
+        current_time = time.time()
+
+        # Tahminler arasındaki zaman farkını hesapla
+        elapsed_time = current_time - last_prediction_time
+
+        if elapsed_time >= prediction_interval:
+            # Tahmin yap
             prediction = model.predict([features])[0]
-            socketio.emit('speaker_update', {'speaker': prediction})
+
+            # Toplam süreyi güncelle
+            total_time += elapsed_time
+
+            # Konuşmacının süresini güncelle
+            if prediction not in speaker_times:
+                speaker_times[prediction] = 0
+            speaker_times[prediction] += elapsed_time
+
+            # Yüzdelikleri hesapla
+            percentages = {k: (v / total_time) * 100 for k, v in speaker_times.items()}
+
+            # Sonuçları frontend'e gönder
+            socketio.emit('speaker_update', {
+                'speaker': prediction,
+                'percentages': percentages
+            })
+
+            # Son tahmin zamanını güncelle
             last_prediction_time = current_time
             
 def record_audio(file_path):
@@ -439,11 +465,13 @@ is_recording = False
 
 @socketio.on('start_recording')
 def start_recording():
-    global recording_thread, is_recording
+    global recording_thread, is_recording, speaker_times, total_time
     if not is_recording or (recording_thread and not recording_thread.is_alive()):
-        # Ses verisini sürekli olarak dinlemek için mikrofonu başlatıyoruz
+        # Kaydı başlat
         print("Recording started...")
         is_recording = True
+        speaker_times = {}  # Konuşmacı sürelerini sıfırla
+        total_time = 0  # Toplam süreyi sıfırla
         recording_thread = threading.Thread(target=record_audio)
         recording_thread.start()
     else:
@@ -451,10 +479,12 @@ def start_recording():
 
 @socketio.on('stop_recording')
 def stop_recording():
-    global is_recording
+    global is_recording, speaker_times, total_time
     is_recording = False
     print("Recording stopped")
-    socketio.emit('speaker_update', {'speaker': 'None'})
+    socketio.emit('speaker_update', {
+        'percentages': speaker_times,  # Durum kaybolmadan raporu gönder
+    })
     
 # Yeni: Analyze route (manuel metin gönderimi için)
 @app.route("/analyze", methods=["POST"])
